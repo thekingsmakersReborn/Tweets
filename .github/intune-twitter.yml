@@ -1,0 +1,113 @@
+name: Intune Updates Twitter Bot
+on:
+  schedule:
+    - cron: '0 */12 * * *'  # Runs every 12 hours
+  workflow_dispatch:  # Allows manual trigger
+
+jobs:
+  tweet-intune-updates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 tweepy python-dateutil
+
+      - name: Create and Execute Script
+        env:
+          TWITTER_API_KEY: ${{ secrets.TWITTER_API_KEY }}
+          TWITTER_API_SECRET: ${{ secrets.TWITTER_API_SECRET }}
+          TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
+          TWITTER_ACCESS_TOKEN_SECRET: ${{ secrets.TWITTER_ACCESS_TOKEN_SECRET }}
+        run: |
+          cat > check_intune_updates.py << 'EOF'
+          import requests
+          from bs4 import BeautifulSoup
+          import tweepy
+          import json
+          import os
+          from datetime import datetime, timezone
+          from dateutil import parser
+          import hashlib
+
+          def setup_twitter():
+              auth = tweepy.OAuthHandler(
+                  os.environ['TWITTER_API_KEY'],
+                  os.environ['TWITTER_API_SECRET']
+              )
+              auth.set_access_token(
+                  os.environ['TWITTER_ACCESS_TOKEN'],
+                  os.environ['TWITTER_ACCESS_TOKEN_SECRET']
+              )
+              return tweepy.API(auth)
+
+          def get_latest_updates():
+              url = "https://learn.microsoft.com/en-us/mem/intune/whats-new"
+              response = requests.get(url)
+              soup = BeautifulSoup(response.text, 'html.parser')
+              
+              updates = []
+              # Find the main content area where updates are listed
+              content_area = soup.find('main', {'id': 'main'})
+              if content_area:
+                  # Look for h2 headers which typically indicate update sections
+                  for section in content_area.find_all(['h2', 'h3']):
+                      update_text = section.get_text().strip()
+                      if update_text and len(update_text) > 5:  # Basic validation
+                          updates.append({
+                              'text': update_text,
+                              'hash': hashlib.md5(update_text.encode()).hexdigest()
+                          })
+              
+              return updates
+
+          def load_previous_updates():
+              try:
+                  with open('previous_updates.json', 'r') as f:
+                      return json.load(f)
+              except FileNotFoundError:
+                  return []
+
+          def save_current_updates(updates):
+              with open('previous_updates.json', 'w') as f:
+                  json.dump(updates, f)
+
+          def main():
+              twitter_api = setup_twitter()
+              current_updates = get_latest_updates()
+              previous_updates = load_previous_updates()
+              
+              # Compare hashes of previous and current updates
+              previous_hashes = {update['hash'] for update in previous_updates}
+              
+              for update in current_updates:
+                  if update['hash'] not in previous_hashes:
+                      tweet_text = f"🔔 New Intune Update:\n{update['text'][:200]}...\n\nRead more: https://learn.microsoft.com/en-us/mem/intune/whats-new"
+                      try:
+                          twitter_api.update_status(tweet_text)
+                          print(f"Successfully tweeted: {update['text'][:50]}...")
+                      except Exception as e:
+                          print(f"Error tweeting update: {str(e)}")
+              
+              save_current_updates(current_updates)
+
+          if __name__ == "__main__":
+              main()
+          EOF
+          
+          python check_intune_updates.py
+
+      - name: Commit updated status
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add previous_updates.json
+          git commit -m "Update previous updates record" || echo "No changes to commit"
+          git push
