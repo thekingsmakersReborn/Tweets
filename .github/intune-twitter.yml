@@ -38,65 +38,114 @@ jobs:
           import hashlib
 
           def setup_twitter():
-              auth = tweepy.OAuthHandler(
-                  os.environ['TWITTER_API_KEY'],
-                  os.environ['TWITTER_API_SECRET']
-              )
-              auth.set_access_token(
-                  os.environ['TWITTER_ACCESS_TOKEN'],
-                  os.environ['TWITTER_ACCESS_TOKEN_SECRET']
-              )
-              return tweepy.API(auth)
+              print("Setting up Twitter API connection...")
+              # Verify we have all required environment variables
+              required_vars = ['TWITTER_API_KEY', 'TWITTER_API_SECRET', 
+                             'TWITTER_ACCESS_TOKEN', 'TWITTER_ACCESS_TOKEN_SECRET']
+              for var in required_vars:
+                  if not os.getenv(var):
+                      raise Exception(f"Missing required environment variable: {var}")
+                  
+              try:
+                  auth = tweepy.OAuthHandler(
+                      os.environ['TWITTER_API_KEY'],
+                      os.environ['TWITTER_API_SECRET']
+                  )
+                  auth.set_access_token(
+                      os.environ['TWITTER_ACCESS_TOKEN'],
+                      os.environ['TWITTER_ACCESS_TOKEN_SECRET']
+                  )
+                  api = tweepy.API(auth)
+                  # Verify credentials
+                  api.verify_credentials()
+                  print("Twitter API connection successful!")
+                  return api
+              except Exception as e:
+                  print(f"Error setting up Twitter API: {str(e)}")
+                  raise
 
           def get_latest_updates():
+              print("Fetching updates from Microsoft Intune page...")
               url = "https://learn.microsoft.com/en-us/mem/intune/whats-new"
-              response = requests.get(url)
-              soup = BeautifulSoup(response.text, 'html.parser')
-              
-              updates = []
-              # Find the main content area where updates are listed
-              content_area = soup.find('main', {'id': 'main'})
-              if content_area:
-                  # Look for h2 headers which typically indicate update sections
+              try:
+                  response = requests.get(url)
+                  response.raise_for_status()  # Raise an exception for bad status codes
+                  print(f"Successfully fetched page with status code: {response.status_code}")
+                  
+                  soup = BeautifulSoup(response.text, 'html.parser')
+                  updates = []
+                  
+                  content_area = soup.find('main', {'id': 'main'})
+                  if not content_area:
+                      print("Warning: Could not find main content area")
+                      return updates
+                      
                   for section in content_area.find_all(['h2', 'h3']):
                       update_text = section.get_text().strip()
-                      if update_text and len(update_text) > 5:  # Basic validation
+                      if update_text and len(update_text) > 5:
                           updates.append({
                               'text': update_text,
                               'hash': hashlib.md5(update_text.encode()).hexdigest()
                           })
-              
-              return updates
+                  
+                  print(f"Found {len(updates)} potential updates")
+                  return updates
+              except Exception as e:
+                  print(f"Error fetching updates: {str(e)}")
+                  raise
 
           def load_previous_updates():
+              print("Loading previous updates...")
               try:
                   with open('previous_updates.json', 'r') as f:
-                      return json.load(f)
+                      updates = json.load(f)
+                      print(f"Loaded {len(updates)} previous updates")
+                      return updates
               except FileNotFoundError:
+                  print("No previous updates file found, starting fresh")
+                  return []
+              except Exception as e:
+                  print(f"Error loading previous updates: {str(e)}")
                   return []
 
           def save_current_updates(updates):
-              with open('previous_updates.json', 'w') as f:
-                  json.dump(updates, f)
+              print(f"Saving {len(updates)} updates...")
+              try:
+                  with open('previous_updates.json', 'w') as f:
+                      json.dump(updates, f)
+                  print("Successfully saved updates")
+              except Exception as e:
+                  print(f"Error saving updates: {str(e)}")
+                  raise
 
           def main():
-              twitter_api = setup_twitter()
-              current_updates = get_latest_updates()
-              previous_updates = load_previous_updates()
-              
-              # Compare hashes of previous and current updates
-              previous_hashes = {update['hash'] for update in previous_updates}
-              
-              for update in current_updates:
-                  if update['hash'] not in previous_hashes:
+              try:
+                  print("Starting Intune update check...")
+                  twitter_api = setup_twitter()
+                  current_updates = get_latest_updates()
+                  previous_updates = load_previous_updates()
+                  
+                  previous_hashes = {update['hash'] for update in previous_updates}
+                  new_updates = [u for u in current_updates if u['hash'] not in previous_hashes]
+                  
+                  print(f"Found {len(new_updates)} new updates to tweet")
+                  
+                  for update in new_updates:
                       tweet_text = f"🔔 New Intune Update:\n{update['text'][:200]}...\n\nRead more: https://learn.microsoft.com/en-us/mem/intune/whats-new"
+                      print(f"Attempting to tweet: {tweet_text[:50]}...")
                       try:
                           twitter_api.update_status(tweet_text)
-                          print(f"Successfully tweeted: {update['text'][:50]}...")
+                          print(f"Successfully tweeted update!")
                       except Exception as e:
                           print(f"Error tweeting update: {str(e)}")
-              
-              save_current_updates(current_updates)
+                          raise
+                  
+                  save_current_updates(current_updates)
+                  print("Script completed successfully!")
+                  
+              except Exception as e:
+                  print(f"Script failed with error: {str(e)}")
+                  raise
 
           if __name__ == "__main__":
               main()
@@ -105,6 +154,7 @@ jobs:
           python check_intune_updates.py
 
       - name: Commit updated status
+        if: success()
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
