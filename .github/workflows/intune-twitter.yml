@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 tweepy python-dateutil feedparser
+          pip install requests beautifulsoup4 tweepy python-dateutil
 
       - name: Create and Execute Script
         env:
@@ -29,10 +29,10 @@ jobs:
         run: |
           cat > check_intune_updates.py << 'EOF'
           import requests
+          from bs4 import BeautifulSoup
           import tweepy
           import json
           import os
-          import feedparser
           from datetime import datetime, timezone
           from dateutil import parser
           import hashlib
@@ -63,23 +63,28 @@ jobs:
                   raise
 
           def get_latest_updates():
-              print("Fetching updates from Microsoft Intune RSS feed...")
-              url = "https://learn.microsoft.com/en-us/mem/intune/fundamentals/whats-new.atom"
+              print("Fetching updates from Microsoft Intune page...")
+              url = "https://techcommunity.microsoft.com/t5/microsoft-intune/bg-p/Microsoft-Intune-Blog"
               
               try:
-                  response = requests.get(url, timeout=30)
+                  headers = {
+                      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                  }
+                  response = requests.get(url, headers=headers, timeout=30)
                   response.raise_for_status()
                   print(f"Successfully fetched page with status code: {response.status_code}")
-                  feed = feedparser.parse(response.content)
+                  
+                  soup = BeautifulSoup(response.text, 'html.parser')
                   updates = []
                   
-                  for entry in feed.entries:
-                      update_text = entry.title
-                      update_date = parser.parse(entry.published)
+                  # Look for update posts in the Intune blog
+                  blog_posts = soup.find_all('div', class_='lia-message-body-content')
+                  
+                  for post in blog_posts:
+                      update_text = post.find('h2').get_text().strip()
                       updates.append({
                           'text': update_text,
-                          'hash': hashlib.md5(update_text.encode()).hexdigest(),
-                          'date': update_date
+                          'hash': hashlib.md5(update_text.encode()).hexdigest()
                       })
                   
                   print(f"Found {len(updates)} potential updates")
@@ -129,7 +134,7 @@ jobs:
                   print(f"Found {len(new_updates)} new updates to tweet")
                   
                   for update in new_updates:
-                      tweet_text = f"🔔 New Intune Update:\n{update['text'][:200]}...\n\nRead more: https://learn.microsoft.com/en-us/mem/intune/fundamentals/whats-new"
+                      tweet_text = f"🔔 New Intune Update:\n{update['text'][:200]}...\n\nRead more: https://techcommunity.microsoft.com/t5/microsoft-intune/bg-p/Microsoft-Intune-Blog"
                       print(f"Attempting to tweet: {tweet_text[:50]}...")
                       try:
                           twitter_api.update_status(tweet_text)
