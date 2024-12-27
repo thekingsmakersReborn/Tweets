@@ -1,11 +1,11 @@
-name: Intune Updates Twitter Bot
+name: Ping and Tweet Site Status
 on:
   schedule:
     - cron: '0 */12 * * *'  # Runs every 12 hours
   workflow_dispatch:  # Allows manual trigger
 
 jobs:
-  tweet-intune-updates:
+  ping-sites:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 tweepy python-dateutil hashlib
+          pip install requests tweepy python-dateutil
 
       - name: Create and Execute Script
         env:
@@ -27,134 +27,67 @@ jobs:
           TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
           TWITTER_ACCESS_TOKEN_SECRET: ${{ secrets.TWITTER_ACCESS_TOKEN_SECRET }}
         run: |
-          cat > check_intune_updates.py << 'EOF'
-          import requests
-          from bs4 import BeautifulSoup
-          import tweepy
-          import json
+          cat > ping_sites_and_tweet.py << 'EOF'
           import os
-          from datetime import datetime, timezone
-          from dateutil import parser
-          import hashlib
+          import requests
+          import tweepy
+          from datetime import datetime
+          from dateutil import tz
 
+          # Define the sites to ping
+          sites = [
+              "https://intune.microsoft.com",
+              "https://portal.azure.com",
+              "https://github.com",
+              "https://config.office.com",
+              "https://portal.azure.com",
+              "https://azure.microsoft.com"
+          ]
+
+          # Set up Twitter API
           def setup_twitter():
-              print("Setting up Twitter API connection...")
-              required_vars = ['TWITTER_API_KEY', 'TWITTER_API_SECRET', 
-                             'TWITTER_ACCESS_TOKEN', 'TWITTER_ACCESS_TOKEN_SECRET']
-              for var in required_vars:
-                  if not os.getenv(var):
-                      raise Exception(f"Missing required environment variable: {var}")
-                  
-              try:
-                  auth = tweepy.OAuthHandler(
-                      os.environ['TWITTER_API_KEY'],
-                      os.environ['TWITTER_API_SECRET']
-                  )
-                  auth.set_access_token(
-                      os.environ['TWITTER_ACCESS_TOKEN'],
-                      os.environ['TWITTER_ACCESS_TOKEN_SECRET']
-                  )
-                  api = tweepy.API(auth)
-                  api.verify_credentials()
-                  print("Twitter API connection successful!")
-                  return api
-              except Exception as e:
-                  print(f"Error setting up Twitter API: {str(e)}")
-                  raise
+              auth = tweepy.OAuthHandler(
+                  os.getenv('TWITTER_API_KEY'),
+                  os.getenv('TWITTER_API_SECRET')
+              )
+              auth.set_access_token(
+                  os.getenv('TWITTER_ACCESS_TOKEN'),
+                  os.getenv('TWITTER_ACCESS_TOKEN_SECRET')
+              )
+              return tweepy.API(auth)
 
-          def get_latest_updates():
-              print("Fetching updates from Microsoft Intune page...")
-              url = "https://learn.microsoft.com/en-us/mem/intune/fundamentals/whats-new"
-              
-              try:
-                  headers = {
-                      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                  }
-                  response = requests.get(url, headers=headers, timeout=30)
-                  response.raise_for_status()
-                  print(f"Successfully fetched page with status code: {response.status_code}")
-                  
-                  soup = BeautifulSoup(response.text, 'html.parser')
-                  updates = []
-                  
-                  # Look for update posts in the Intune blog
-                  blog_posts = soup.find_all('li', class_='has-p-date')
-
-                  for post in blog_posts:
-                      update_text = post.get_text().strip()
-                      updates.append({
-                          'text': update_text,
-                          'hash': hashlib.md5(update_text.encode()).hexdigest()
-                      })
-                  
-                  print(f"Found {len(updates)} potential updates")
-                  return updates
-              except requests.exceptions.RequestException as e:
-                  print(f"Error fetching updates: {str(e)}")
-                  raise
-
-          def load_previous_updates():
-              print("Loading previous updates...")
-              try:
-                  with open('previous_updates.json', 'r') as f:
-                      updates = json.load(f)
-                      print(f"Loaded {len(updates)} previous updates")
-                      return updates
-              except FileNotFoundError:
-                  print("No previous updates file found, starting fresh")
-                  return []
-              except Exception as e:
-                  print(f"Error loading previous updates: {str(e)}")
-                  return []
-
-          def save_current_updates(updates):
-              print(f"Saving {len(updates)} updates...")
-              try:
-                  with open('previous_updates.json', 'w') as f:
-                      json.dump(updates, f)
-                  print("Successfully saved updates")
-              except Exception as e:
-                  print(f"Error saving updates: {str(e)}")
-                  raise
+          # Ping each site and collect the status
+          def ping_sites():
+              statuses = []
+              for site in sites:
+                  try:
+                      response = requests.get(site, timeout=10)
+                      if response.status_code == 200:
+                          statuses.append(f"✅ {site} is UP")
+                      else:
+                          statuses.append(f"❌ {site} is DOWN")
+                  except requests.exceptions.RequestException:
+                      statuses.append(f"❌ {site} is DOWN")
+              return statuses
 
           def main():
-              try:
-                  print("Starting Intune update check...")
-                  twitter_api = setup_twitter()
-                  current_updates = get_latest_updates()
-                  
-                  if not current_updates:
-                      print("No updates found to process")
-                      return
-                      
-                  previous_updates = load_previous_updates()
-                  previous_hashes = {update['hash'] for update in previous_updates}
-                  new_updates = [u for u in current_updates if u['hash'] not in previous_hashes]
-                  
-                  print(f"Found {len(new_updates)} new updates to tweet")
-                  
-                  for update in new_updates:
-                      tweet_text = f"🔔 New Intune Update:\n{update['text'][:200]}...\n\nRead more: https://learn.microsoft.com/en-us/mem/intune/fundamentals/whats-new"
-                      print(f"Attempting to tweet: {tweet_text[:50]}...")
-                      try:
-                          twitter_api.update_status(tweet_text)
-                          print(f"Successfully tweeted update!")
-                      except Exception as e:
-                          print(f"Error tweeting update: {str(e)}")
-                          raise
-                  
-                  save_current_updates(current_updates)
-                  print("Script completed successfully!")
-                  
-              except Exception as e:
-                  print(f"Script failed with error: {str(e)}")
-                  raise
+              api = setup_twitter()
+              statuses = ping_sites()
+
+              # Get the current time with timezone
+              now = datetime.now(tz=tz.gettz('Asia/Qatar')).strftime('%Y-%m-%d %H:%M:%S %Z')
+
+              # Construct the tweet text
+              tweet_text = f"Site Status as of {now}:\n" + "\n".join(statuses)
+
+              # Post the tweet
+              api.update_status(tweet_text)
 
           if __name__ == "__main__":
               main()
           EOF
           
-          python check_intune_updates.py
+          python ping_sites_and_tweet.py
 
       - name: Commit updated status
         if: success()
