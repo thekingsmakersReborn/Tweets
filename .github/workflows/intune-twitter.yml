@@ -39,7 +39,6 @@ jobs:
 
           def setup_twitter():
               print("Setting up Twitter API connection...")
-              # Verify we have all required environment variables
               required_vars = ['TWITTER_API_KEY', 'TWITTER_API_SECRET', 
                              'TWITTER_ACCESS_TOKEN', 'TWITTER_ACCESS_TOKEN_SECRET']
               for var in required_vars:
@@ -56,7 +55,6 @@ jobs:
                       os.environ['TWITTER_ACCESS_TOKEN_SECRET']
                   )
                   api = tweepy.API(auth)
-                  # Verify credentials
                   api.verify_credentials()
                   print("Twitter API connection successful!")
                   return api
@@ -66,23 +64,32 @@ jobs:
 
           def get_latest_updates():
               print("Fetching updates from Microsoft Intune page...")
+              # Updated URL to the correct Intune What's New page
               url = "https://learn.microsoft.com/en-us/mem/intune/fundamentals/whats-new"
+              
               try:
-                  response = requests.get(url)
-                  response.raise_for_status()  # Raise an exception for bad status codes
+                  headers = {
+                      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                  }
+                  response = requests.get(url, headers=headers, timeout=30)
+                  response.raise_for_status()
                   print(f"Successfully fetched page with status code: {response.status_code}")
                   
                   soup = BeautifulSoup(response.text, 'html.parser')
                   updates = []
                   
+                  # Look for the main content area and recent updates
                   content_area = soup.find('main', {'id': 'main'})
                   if not content_area:
                       print("Warning: Could not find main content area")
-                      return updates
-                      
-                  for section in content_area.find_all(['h2', 'h3']):
+                      content_area = soup  # Fallback to entire page
+                  
+                  # Look for different heading levels that might contain update information
+                  for section in content_area.find_all(['h1', 'h2', 'h3']):
                       update_text = section.get_text().strip()
-                      if update_text and len(update_text) > 5:
+                      # Filter for relevant updates
+                      if update_text and len(update_text) > 5 and any(keyword in update_text.lower() 
+                          for keyword in ['update', 'new', 'change', 'release', 'improve']):
                           updates.append({
                               'text': update_text,
                               'hash': hashlib.md5(update_text.encode()).hexdigest()
@@ -90,7 +97,7 @@ jobs:
                   
                   print(f"Found {len(updates)} potential updates")
                   return updates
-              except Exception as e:
+              except requests.exceptions.RequestException as e:
                   print(f"Error fetching updates: {str(e)}")
                   raise
 
@@ -123,8 +130,12 @@ jobs:
                   print("Starting Intune update check...")
                   twitter_api = setup_twitter()
                   current_updates = get_latest_updates()
-                  previous_updates = load_previous_updates()
                   
+                  if not current_updates:
+                      print("No updates found to process")
+                      return
+                      
+                  previous_updates = load_previous_updates()
                   previous_hashes = {update['hash'] for update in previous_updates}
                   new_updates = [u for u in current_updates if u['hash'] not in previous_hashes]
                   
