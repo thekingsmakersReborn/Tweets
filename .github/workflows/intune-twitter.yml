@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 tweepy python-dateutil
+          pip install requests beautifulsoup4 tweepy python-dateutil hashlib
 
       - name: Create and Execute Script
         env:
@@ -64,7 +64,7 @@ jobs:
 
           def get_latest_updates():
               print("Fetching updates from Microsoft Intune page...")
-              url = "https://techcommunity.microsoft.com/t5/microsoft-intune/bg-p/Microsoft-Intune-Blog"
+              url = "https://learn.microsoft.com/en-us/mem/intune/fundamentals/whats-new"
               
               try:
                   headers = {
@@ -134,7 +134,7 @@ jobs:
                   print(f"Found {len(new_updates)} new updates to tweet")
                   
                   for update in new_updates:
-                      tweet_text = f"🔔 New Intune Update:\n{update['text'][:200]}...\n\nRead more: https://techcommunity.microsoft.com/t5/microsoft-intune/bg-p/Microsoft-Intune-Blog"
+                      tweet_text = f"🔔 New Intune Update:\n{update['text'][:200]}...\n\nRead more: https://learn.microsoft.com/en-us/mem/intune/fundamentals/whats-new"
                       print(f"Attempting to tweet: {tweet_text[:50]}...")
                       try:
                           twitter_api.update_status(tweet_text)
