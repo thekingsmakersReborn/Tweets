@@ -78,10 +78,10 @@ jobs:
                   updates = []
                   
                   # Look for update posts in the Intune blog
-                  blog_posts = soup.find_all('div', class_='lia-message-body-content')
-                  
+                  blog_posts = soup.find_all('li', class_='has-p-date')
+
                   for post in blog_posts:
-                      update_text = post.find('h2').get_text().strip()
+                      update_text = post.get_text().strip()
                       updates.append({
                           'text': update_text,
                           'hash': hashlib.md5(update_text.encode()).hexdigest()
